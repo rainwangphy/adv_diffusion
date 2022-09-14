@@ -16,9 +16,11 @@ diffusion = GaussianDiffusion(
     loss_type="l1",  # L1 or L2
 ).cuda()
 
+
+data_dir = "../../../data/home/rainwangphy/images"
 trainer = Trainer(
     diffusion,
-    "./images",
+    data_dir,
     train_batch_size=48,
     train_lr=8e-5,
     train_num_steps=50000,  # total training steps

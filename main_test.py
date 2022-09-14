@@ -1,7 +1,6 @@
-import torch
-num_timesteps = 100
-b = 64
+import os
 
-t = torch.randint(0, num_timesteps, (b,)).long()
+data_dir = "../../../data/home/rainwangphy/images"
 
-print(t)
+for dir in os.listdir(data_dir):
+    print(dir)
