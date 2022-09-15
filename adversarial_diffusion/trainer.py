@@ -19,6 +19,10 @@ from adversarial_diffusion.utils import (
     num_to_groups,
 )
 
+from accelerate import DistributedDataParallelKwargs
+
+ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+# accelerator = Accelerator()
 # constants
 
 ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x_start"])
@@ -49,7 +53,9 @@ class Trainer(object):
         super().__init__()
 
         self.accelerator = Accelerator(
-            split_batches=split_batches, mixed_precision="fp16" if fp16 else "no"
+            split_batches=split_batches,
+            mixed_precision="fp16" if fp16 else "no",
+            kwargs_handlers=[ddp_kwargs],
         )
 
         self.accelerator.native_amp = amp

@@ -25,21 +25,21 @@ ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x_start"])
 
 class AdvDiffusion(nn.Module):
     def __init__(
-            self,
-            model,
-            adv_model=None,
-            *,
-            image_size,
-            timesteps=1000,
-            sampling_timesteps=None,
-            loss_type="l1",
-            objective="pred_noise",
-            beta_schedule="cosine",
-            p2_loss_weight_gamma=0.0,
-            # p2 loss weight, from https://arxiv.org/abs/2204.00227 - 0 is equivalent to
-            # weight of 1 across time - 1. is recommended
-            p2_loss_weight_k=1,
-            ddim_sampling_eta=1.0,
+        self,
+        model,
+        adv_model=None,
+        *,
+        image_size,
+        timesteps=1000,
+        sampling_timesteps=None,
+        loss_type="l1",
+        objective="pred_noise",
+        beta_schedule="cosine",
+        p2_loss_weight_gamma=0.0,
+        # p2 loss weight, from https://arxiv.org/abs/2204.00227 - 0 is equivalent to
+        # weight of 1 across time - 1. is recommended
+        p2_loss_weight_k=1,
+        ddim_sampling_eta=1.0,
     ):
         super().__init__()
         assert not (type(self) == GaussianDiffusion and model.channels != model.out_dim)
@@ -48,7 +48,7 @@ class AdvDiffusion(nn.Module):
         self.adv_model = adv_model
         self.channels = self.model.channels
         self.self_condition = self.model.self_condition
-
+        self.noise_scaling = 1.0
         self.image_size = image_size
 
         self.objective = objective
@@ -108,7 +108,7 @@ class AdvDiffusion(nn.Module):
         # calculations for posterior q(x_{t-1} | x_t, x_0)
 
         posterior_variance = (
-                betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
         )
 
         # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
@@ -140,19 +140,19 @@ class AdvDiffusion(nn.Module):
 
     def predict_start_from_noise(self, x_t, t, noise):
         return (
-                extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
-                - extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise
+            extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
+            - extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise
         )
 
     def predict_noise_from_start(self, x_t, t, x0):
         return (
-                       extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0
-               ) / extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+            extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0
+        ) / extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
 
     def q_posterior(self, x_start, x_t, t):
         posterior_mean = (
-                extract(self.posterior_mean_coef1, t, x_t.shape) * x_start
-                + extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
+            extract(self.posterior_mean_coef1, t, x_t.shape) * x_start
+            + extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
         )
         posterior_variance = extract(self.posterior_variance, t, x_t.shape)
         posterior_log_variance_clipped = extract(
@@ -205,9 +205,9 @@ class AdvDiffusion(nn.Module):
         x_start = None
 
         for t in tqdm(
-                reversed(range(0, self.num_timesteps)),
-                desc="sampling loop time step",
-                total=self.num_timesteps,
+            reversed(range(0, self.num_timesteps)),
+            desc="sampling loop time step",
+            total=self.num_timesteps,
         ):
             self_cond = x_start if self.self_condition else None
             img, x_start = self.p_sample(img, t, self_cond)
@@ -248,7 +248,7 @@ class AdvDiffusion(nn.Module):
                 x_start.clamp_(-1.0, 1.0)
 
             sigma = (
-                    eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+                eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             )
             c = ((1 - alpha_next) - sigma ** 2).sqrt()
 
@@ -279,7 +279,7 @@ class AdvDiffusion(nn.Module):
 
         img = (1 - lam) * xt1 + lam * xt2
         for i in tqdm(
-                reversed(range(0, t)), desc="interpolation sample time step", total=t
+            reversed(range(0, t)), desc="interpolation sample time step", total=t
         ):
             img = self.p_sample(
                 img, torch.full((b,), i, device=device, dtype=torch.long)
@@ -289,13 +289,16 @@ class AdvDiffusion(nn.Module):
 
     def q_sample(self, x_start, t, noise=None):
 
-        if not self.adv_model:
-            noise = self.adv_model(x_start, t)
+        if self.adv_model:
+            noise = default(noise, lambda: self.adv_model(x_start, t).detach() * self.noise_scaling)
         else:
             noise = default(noise, lambda: torch.randn_like(x_start))
+
+        # noise = default(noise, lambda: torch.randn_like(x_start))
+
         return (
-                extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
-                + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
+            extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
+            + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
     @property
@@ -309,7 +312,10 @@ class AdvDiffusion(nn.Module):
 
     def p_losses(self, x_start, t, noise=None):
         b, c, h, w = x_start.shape
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        if self.adv_model:
+            noise = default(noise, lambda: self.adv_model(x_start, t).detach() * self.noise_scaling)
+        else:
+            noise = default(noise, lambda: torch.randn_like(x_start))
 
         # noise sample
 
@@ -349,7 +355,7 @@ class AdvDiffusion(nn.Module):
             self.image_size,
         )
         assert (
-                h == img_size and w == img_size
+            h == img_size and w == img_size
         ), f"height and width of image must be {img_size}"
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
@@ -359,20 +365,20 @@ class AdvDiffusion(nn.Module):
 
 class GaussianDiffusion(nn.Module):
     def __init__(
-            self,
-            model,
-            *,
-            image_size,
-            timesteps=1000,
-            sampling_timesteps=None,
-            loss_type="l1",
-            objective="pred_noise",
-            beta_schedule="cosine",
-            p2_loss_weight_gamma=0.0,
-            # p2 loss weight, from https://arxiv.org/abs/2204.00227 - 0 is equivalent to
-            # weight of 1 across time - 1. is recommended
-            p2_loss_weight_k=1,
-            ddim_sampling_eta=1.0,
+        self,
+        model,
+        *,
+        image_size,
+        timesteps=1000,
+        sampling_timesteps=None,
+        loss_type="l1",
+        objective="pred_noise",
+        beta_schedule="cosine",
+        p2_loss_weight_gamma=0.0,
+        # p2 loss weight, from https://arxiv.org/abs/2204.00227 - 0 is equivalent to
+        # weight of 1 across time - 1. is recommended
+        p2_loss_weight_k=1,
+        ddim_sampling_eta=1.0,
     ):
         super().__init__()
         assert not (type(self) == GaussianDiffusion and model.channels != model.out_dim)
@@ -440,7 +446,7 @@ class GaussianDiffusion(nn.Module):
         # calculations for posterior q(x_{t-1} | x_t, x_0)
 
         posterior_variance = (
-                betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
         )
 
         # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
@@ -472,19 +478,19 @@ class GaussianDiffusion(nn.Module):
 
     def predict_start_from_noise(self, x_t, t, noise):
         return (
-                extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
-                - extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise
+            extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
+            - extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise
         )
 
     def predict_noise_from_start(self, x_t, t, x0):
         return (
-                       extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0
-               ) / extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+            extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0
+        ) / extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
 
     def q_posterior(self, x_start, x_t, t):
         posterior_mean = (
-                extract(self.posterior_mean_coef1, t, x_t.shape) * x_start
-                + extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
+            extract(self.posterior_mean_coef1, t, x_t.shape) * x_start
+            + extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
         )
         posterior_variance = extract(self.posterior_variance, t, x_t.shape)
         posterior_log_variance_clipped = extract(
@@ -537,9 +543,9 @@ class GaussianDiffusion(nn.Module):
         x_start = None
 
         for t in tqdm(
-                reversed(range(0, self.num_timesteps)),
-                desc="sampling loop time step",
-                total=self.num_timesteps,
+            reversed(range(0, self.num_timesteps)),
+            desc="sampling loop time step",
+            total=self.num_timesteps,
         ):
             self_cond = x_start if self.self_condition else None
             img, x_start = self.p_sample(img, t, self_cond)
@@ -580,7 +586,7 @@ class GaussianDiffusion(nn.Module):
                 x_start.clamp_(-1.0, 1.0)
 
             sigma = (
-                    eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+                eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             )
             c = ((1 - alpha_next) - sigma ** 2).sqrt()
 
@@ -611,7 +617,7 @@ class GaussianDiffusion(nn.Module):
 
         img = (1 - lam) * xt1 + lam * xt2
         for i in tqdm(
-                reversed(range(0, t)), desc="interpolation sample time step", total=t
+            reversed(range(0, t)), desc="interpolation sample time step", total=t
         ):
             img = self.p_sample(
                 img, torch.full((b,), i, device=device, dtype=torch.long)
@@ -623,8 +629,8 @@ class GaussianDiffusion(nn.Module):
         noise = default(noise, lambda: torch.randn_like(x_start))
 
         return (
-                extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
-                + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
+            extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
+            + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
     @property
@@ -678,7 +684,7 @@ class GaussianDiffusion(nn.Module):
             self.image_size,
         )
         assert (
-                h == img_size and w == img_size
+            h == img_size and w == img_size
         ), f"height and width of image must be {img_size}"
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
