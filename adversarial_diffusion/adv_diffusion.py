@@ -290,7 +290,9 @@ class AdvDiffusion(nn.Module):
     def q_sample(self, x_start, t, noise=None):
 
         if self.adv_model:
-            noise = default(noise, lambda: self.adv_model(x_start, t).detach() * self.noise_scaling)
+            noise = default(
+                noise, lambda: self.adv_model(x_start, t).detach() * self.noise_scaling
+            )
         else:
             noise = default(noise, lambda: torch.randn_like(x_start))
 
@@ -313,7 +315,9 @@ class AdvDiffusion(nn.Module):
     def p_losses(self, x_start, t, noise=None):
         b, c, h, w = x_start.shape
         if self.adv_model:
-            noise = default(noise, lambda: self.adv_model(x_start, t).detach() * self.noise_scaling)
+            noise = default(
+                noise, lambda: self.adv_model(x_start, t).detach() * self.noise_scaling
+            )
         else:
             noise = default(noise, lambda: torch.randn_like(x_start))
 
